@@ -1,0 +1,373 @@
+Let's implement the Client Service for the Stock Price Monitoring Service based on the architecture and folder structure provided. The Client Service is responsible for fetching intraday stock prices from the Alpha Vantage API every minute and sending them to the Server via a REST API. Below, I'll provide the implementation for the key files in the `client/` directory, focusing on functionality, error handling, and alignment with the 12-hour development timeframe.
+
+### Folder Structure Recap
+```
+client/
+├── src/
+│   ├── __init__.py
+│   ├── main.py
+│   ├── alpha_vantage.py
+│   ├── config.py
+│   └── utils/
+│       ├── __init__.py
+│       ├── logger.py
+│       └── retry.py
+├── tests/
+│   ├── __init__.py
+│   └── test_alpha_vantage.py
+├── Dockerfile
+├── requirements.txt
+└── .env.example
+```
+
+### Implementation Details
+- **Language**: Python
+- **Key Libraries**:
+  - `requests`: For Alpha Vantage API calls and Server communication.
+  - `python-dotenv`: For environment variable management.
+- **Functionality**:
+  - Fetch intraday stock prices for a configurable list of symbols (e.g., AAPL, GOOGL) every minute.
+  - Send data to Server via `POST /stocks`.
+  - Handle Alpha Vantage rate limits (5 calls/minute for free tier).
+  - Implement retries for failed API calls.
+  - Log errors and activities.
+- **Constraints**:
+  - Simple and robust for quick development.
+  - Configurable via `.env`.
+
+Below are the implementations for each file.
+
+---
+
+#### 1. `client/src/config.py`
+This file loads environment variables (API key, Server URL, stock symbols).
+
+```python
+import os
+from dotenv import load_dotenv
+
+load_dotenv()
+
+class Config:
+    ALPHA_VANTAGE_API_KEY = os.getenv("ALPHA_VANTAGE_API_KEY")
+    SERVER_URL = os.getenv("SERVER_URL", "http://server:8000")
+    STOCK_SYMBOLS = os.getenv("STOCK_SYMBOLS", "AAPL,GOOGL,MSFT").split(",")
+    POLL_INTERVAL = int(os.getenv("POLL_INTERVAL", 60))  # Seconds
+
+    @staticmethod
+    def validate():
+        if not Config.ALPHA_VANTAGE_API_KEY:
+            raise ValueError("ALPHA_VANTAGE_API_KEY is not set")
+        if not Config.STOCK_SYMBOLS:
+            raise ValueError("STOCK_SYMBOLS is not set")
+```
+
+**Notes**:
+- Uses `python-dotenv` to load `.env`.
+- Defaults: Server URL points to `server` service in Docker, poll interval is 60s.
+- Validation ensures required variables are set.
+
+---
+
+#### 2. `client/src/utils/logger.py`
+Sets up logging for the Client Service.
+
+```python
+import logging
+
+def setup_logger(name: str) -> logging.Logger:
+    logger = logging.getLogger(name)
+    logger.setLevel(logging.INFO)
+    handler = logging.StreamHandler()
+    formatter = logging.Formatter(
+        "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
+    )
+    handler.setFormatter(formatter)
+    if not logger.handlers:
+        logger.addHandler(handler)
+    return logger
+```
+
+**Notes**:
+- Configures a logger with timestamp, name, level, and message.
+- Reusable across modules.
+- Outputs to console (can extend to files if needed).
+
+---
+
+#### 3. `client/src/utils/retry.py`
+Implements retry logic for API calls.
+
+```python
+import time
+from functools import wraps
+import logging
+
+def retry(max_attempts: int = 3, delay: int = 1, backoff: int = 2):
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            logger = logging.getLogger(__name__)
+            attempts = 0
+            current_delay = delay
+            while attempts < max_attempts:
+                try:
+                    return func(*args, **kwargs)
+                except Exception as e:
+                    attempts += 1
+                    if attempts == max_attempts:
+                        logger.error(f"Failed after {max_attempts} attempts: {e}")
+                        raise
+                    logger.warning(f"Attempt {attempts} failed: {e}. Retrying in {current_delay}s")
+                    time.sleep(current_delay)
+                    current_delay *= backoff
+        return wrapper
+    return decorator
+```
+
+**Notes**:
+- Decorates functions with retry logic (up to 3 attempts).
+- Exponential backoff (1s, 2s, 4s).
+- Logs retries and failures.
+
+---
+
+#### 4. `client/src/alpha_vantage.py`
+Handles Alpha Vantage API integration.
+
+```python
+import requests
+from typing import Dict, Optional
+from .config import Config
+from .utils.logger import setup_logger
+
+class AlphaVantageClient:
+    def __init__(self):
+        self.api_key = Config.ALPHA_VANTAGE_API_KEY
+        self.base_url = "https://www.alphavantage.co/query"
+        self.logger = setup_logger(__name__)
+
+    def fetch_stock_data(self, symbol: str) -> Optional[Dict]:
+        params = {
+            "function": "TIME_SERIES_INTRADAY",
+            "symbol": symbol,
+            "interval": "1min",
+            "apikey": self.api_key,
+        }
+        try:
+            response = requests.get(self.base_url, params=params, timeout=10)
+            response.raise_for_status()
+            data = response.json()
+            if "Time Series (1min)" not in data:
+                self.logger.error(f"No data for {symbol}: {data.get('Note', 'Unknown error')}")
+                return None
+            return data
+        except requests.RequestException as e:
+            self.logger.error(f"Failed to fetch data for {symbol}: {e}")
+            return None
+```
+
+**Notes**:
+- Fetches 1-minute intraday data for a given symbol.
+- Handles API errors (e.g., rate limits, network issues).
+- Returns `None` on failure to allow retries in `main.py`.
+
+---
+
+#### 5. `client/src/main.py`
+Main entry point for the Client Service.
+
+```python
+import time
+import requests
+from typing import Dict
+from datetime import datetime
+from .config import Config
+from .alpha_vantage import AlphaVantageClient
+from .utils.logger import setup_logger
+from .utils.retry import retry
+
+class StockClient:
+    def __init__(self):
+        self.config = Config()
+        self.config.validate()
+        self.alpha_vantage = AlphaVantageClient()
+        self.logger = setup_logger(__name__)
+        self.server_url = f"{self.config.SERVER_URL}/stocks"
+
+    @retry(max_attempts=3, delay=1, backoff=2)
+    def send_to_server(self, data: Dict) -> bool:
+        try:
+            response = requests.post(self.server_url, json=data, timeout=5)
+            response.raise_for_status()
+            self.logger.info(f"Sent data for {data['symbol']} to server")
+            return True
+        except requests.RequestException as e:
+            self.logger.error(f"Failed to send data to server: {e}")
+            return False
+
+    def process_symbol(self, symbol: str):
+        data = self.alpha_vantage.fetch_stock_data(symbol)
+        if not data:
+            return
+
+        latest_time = max(data["Time Series (1min)"].keys())
+        stock_data = data["Time Series (1min)"][latest_time]
+        payload = {
+            "symbol": symbol,
+            "timestamp": latest_time,
+            "price": float(stock_data["4. close"]),
+            "volume": int(stock_data["5. volume"]),
+        }
+        self.send_to_server(payload)
+
+    def run(self):
+        self.logger.info("Starting Stock Client")
+        while True:
+            for symbol in self.config.STOCK_SYMBOLS:
+                self.process_symbol(symbol)
+                time.sleep(12)  # Spread 5 API calls over 1 minute (60s / 5 = 12s)
+            self.logger.info("Completed cycle for all symbols")
+            time.sleep(self.config.POLL_INTERVAL - len(self.config.STOCK_SYMBOLS) * 12)
+
+if __name__ == "__main__":
+    client = StockClient()
+    client.run()
+```
+
+**Notes**:
+- Initializes configuration and Alpha Vantage client.
+- Loops indefinitely, processing each symbol every minute.
+- Respects Alpha Vantage rate limit by spacing calls (12s per symbol for 5 calls/min).
+- Extracts latest price and volume, sends to Server.
+- Uses `@retry` for Server POST requests.
+- Sleeps to align with `POLL_INTERVAL`.
+
+---
+
+#### 6. `client/tests/test_alpha_vantage.py`
+Basic unit test for Alpha Vantage integration.
+
+```python
+import unittest
+from unittest.mock import patch
+from client.src.alpha_vantage import AlphaVantageClient
+
+class TestAlphaVantageClient(unittest.TestCase):
+    def setUp(self):
+        self.client = AlphaVantageClient()
+
+    @patch("requests.get")
+    def test_fetch_stock_data_success(self, mock_get):
+        mock_response = {
+            "Time Series (1min)": {
+                "2025-04-12 10:00:00": {
+                    "4. close": "150.25",
+                    "5. volume": "1000"
+                }
+            }
+        }
+        mock_get.return_value.json.return_value = mock_response
+        mock_get.return_value.raise_for_status.return_value = None
+
+        result = self.client.fetch_stock_data("AAPL")
+        self.assertIsNotNone(result)
+        self.assertIn("Time Series (1min)", result)
+
+if __name__ == "__main__":
+    unittest.main()
+```
+
+**Notes**:
+- Mocks `requests.get` to simulate API response.
+- Tests successful data fetch.
+- Can expand with error case tests if time permits.
+
+---
+
+#### 7. `client/requirements.txt`
+Dependencies for the Client Service.
+
+```
+requests==2.31.0
+python-dotenv==1.0.0
+```
+
+**Notes**:
+- Minimal dependencies for simplicity.
+- Versions pinned for reproducibility.
+
+---
+
+#### 8. `client/Dockerfile`
+Docker configuration for the Client Service.
+
+```dockerfile
+FROM python:3.11-slim
+
+WORKDIR /app
+
+COPY requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+COPY src/ .
+
+ENV PYTHONUNBUFFERED=1
+
+CMD ["python", "main.py"]
+```
+
+**Notes**:
+- Uses lightweight `python:3.11-slim` base image.
+- Installs dependencies and copies source code.
+- Sets `PYTHONUNBUFFERED` for real-time logging.
+- Runs `main.py` as entry point.
+
+---
+
+#### 9. `client/.env.example`
+Template for environment variables.
+
+```
+ALPHA_VANTAGE_API_KEY=your_api_key_here
+SERVER_URL=http://server:8000
+STOCK_SYMBOLS=AAPL,GOOGL,MSFT,TSLA,AMZN
+POLL_INTERVAL=60
+```
+
+**Notes**:
+- Guides users to set API key and symbols.
+- Defaults to internal Docker service name (`server`).
+
+---
+
+### How It Works
+1. **Startup**: `main.py` loads config, validates environment variables, and initializes the Alpha Vantage client.
+2. **Main Loop**:
+   - Iterates over symbols (e.g., AAPL, GOOGL).
+   - Calls `fetch_stock_data` to get intraday prices.
+   - Extracts latest price and volume.
+   - Sends data to Server via `POST /stocks`.
+   - Waits 12s between symbols to respect rate limits.
+   - Sleeps to maintain 60s cycle.
+3. **Error Handling**:
+   - Retries failed Server POSTs with exponential backoff.
+   - Logs API and network errors.
+   - Skips failed fetches to avoid blocking.
+4. **Docker**: Runs in a container, configurable via `.env`.
+
+### Running Locally
+1. Create `.env` from `.env.example` and set `ALPHA_VANTAGE_API_KEY`.
+2. Build and run:
+   ```bash
+   docker build -t stock-client .
+   docker run --env-file .env stock-client
+   ```
+3. Ensure Server is running at `http://server:8000` (or update `SERVER_URL`).
+
+### Next Steps
+- Test integration with Server once implemented.
+- Add more tests (e.g., rate limit handling, Server errors).
+- Adjust `STOCK_SYMBOLS` or `POLL_INTERVAL` as needed.
+
+If you want to proceed with the Server implementation, tweak the Client (e.g., add caching), or focus on something else, let me know!

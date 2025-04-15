@@ -1,0 +1,271 @@
+# Architecture Design for Stock Price Monitoring Service
+
+Based on the High-Level Design (HLD), this section defines the detailed architecture, including the tech stack, communication protocols, specific design choices, and implementation considerations. The architecture balances simplicity, scalability, and the 12-hour suggested timeframe while incorporating optional features to showcase robustness.
+
+---
+
+## 1. Architecture Overview
+The system follows a **microservices-inspired architecture** with loosely coupled components: a Client Service, Server, Database, Notification Service, and an optional Frontend. The components communicate primarily via **REST APIs** for simplicity, with asynchronous messaging for notifications to ensure reliability. The system is containerized using **Docker** for easy deployment.
+
+---
+
+## 2. Tech Stack
+The tech stack is chosen for developer productivity, scalability, and alignment with the project requirements.
+
+### 2.1 Backend
+- **Language**: **Python**
+  - Rationale: Python is versatile, has excellent libraries for API integration (e.g., `requests`), and supports rapid development for a 12-hour timeframe.
+  - Key Libraries:
+    - `fastapi`: For building REST APIs (Server).
+    - `requests`: For Alpha Vantage API calls (Client).
+    - `sqlalchemy`: For database ORM (Server).
+    - `pydantic`: For data validation.
+    - `smtplib` or `boto3`: For email notifications (Notification Service).
+
+### 2.2 Database
+- **Type**: **PostgreSQL** (Relational)
+  - Rationale: PostgreSQL is robust, supports structured data, and is well-suited for stock prices and notification metadata. It’s widely used and integrates seamlessly with Python.
+  - Alternative Considered: MongoDB (NoSQL) for flexibility, but PostgreSQL’s indexing and query performance are better for time-series data in this scope.
+
+### 2.3 Notification Queue
+- **Tool**: **Redis** (with `redis-py`)
+  - Rationale: Redis is lightweight and ideal for a simple message queue to handle notifications asynchronously. It’s easier to set up than RabbitMQ or Kafka for a 12-hour project.
+
+### 2.4 Frontend (Optional)
+- **Framework**: **React**
+  - Rationale: React is popular, has a rich ecosystem (e.g., Chart.js for stock charts), and allows quick prototyping of a dashboard within the timeframe.
+  - Libraries:
+    - `axios`: For API calls.
+    - `chart.js` or `recharts`: For visualizing stock price trends.
+
+### 2.5 Deployment
+- **Tool**: **Docker** with **docker-compose**
+  - Rationale: Docker simplifies deployment and ensures consistency across environments. `docker-compose` is sufficient for orchestrating the Client, Server, Database, Redis, and Frontend in a single machine setup.
+  - Alternative Considered: Kubernetes for scalability, but it’s overkill for the project scope.
+
+### 2.6 Email Service
+- **Provider**: **AWS SES** (Simple Email Service)
+  - Rationale: AWS SES is cost-effective, reliable, and integrates easily with Python via `boto3`. It handles email delivery without needing a full SMTP server setup.
+
+### 2.7 Security
+- **HTTPS**: Enabled via **Traefik** or **Caddy** as a reverse proxy in Docker.
+  - Rationale: Caddy is lightweight and auto-configures TLS, simplifying HTTPS setup.
+- **Authentication**: **OAuth2 with Gmail** (optional, time-permitting).
+  - Rationale: Simplifies user management and aligns with the optional SSO feature.
+
+---
+
+## 3. Communication Protocols
+
+### 3.1 Client to Server
+- **Protocol**: **REST over HTTP**
+  - Endpoint: `POST /stocks`
+  - Payload: JSON with stock symbol, price, timestamp, and volume.
+  - Rationale: REST is simple, widely supported, and sufficient for the Client’s periodic data submissions. gRPC was considered for performance but adds complexity for a small project.
+- **Security**: HTTPS enforced via reverse proxy.
+
+### 3.2 Server to Database
+- **Protocol**: **SQL via SQLAlchemy**
+  - Rationale: SQLAlchemy provides a Pythonic ORM for PostgreSQL, balancing ease of use with performance.
+
+### 3.3 Server to Notification Service
+- **Protocol**: **Redis Pub/Sub**
+  - Rationale: Redis Pub/Sub is lightweight and decouples the Server from the Notification Service, allowing asynchronous email processing. Kafka was considered for durability but is excessive for the scope.
+
+### 3.4 Server to Frontend
+- **Protocol**: **REST over HTTP**
+  - Endpoints:
+    - `GET /stocks/{symbol}?start_time={}&end_time={}`: Fetch stock price history.
+    - `POST /notifications`: Create a notification.
+    - `GET /notifications`: List user’s notifications.
+    - `DELETE /notifications/{id}`: Remove a notification.
+  - Rationale: REST is ideal for Frontend-Server communication due to its simplicity and compatibility with React.
+
+### 3.5 Notification Service to Email Provider
+- **Protocol**: **SMTP via AWS SES API**
+  - Rationale: SES’s API is straightforward and handles email delivery reliably.
+
+---
+
+## 4. Component Design
+
+### 4.1 Client Service
+- **Responsibilities**:
+  - Fetch intraday stock prices for 10 symbols (e.g., AAPL, GOOGL, MSFT, etc.) every minute.
+  - Send data to Server via `POST /stocks`.
+- **Implementation**:
+  - Python script using `requests` to call Alpha Vantage API (`TIME_SERIES_INTRADAY`).
+  - Configurable stock symbols in a `.env` file.
+  - Rate limit handling: Sleep between API calls to respect Alpha Vantage’s 5 calls/minute limit.
+  - Retry logic with exponential backoff for failed API calls.
+- **Error Handling**:
+  - Log errors to console/file.
+  - Cache last fetched data in memory to handle API downtime.
+
+### 4.2 Server
+- **Responsibilities**:
+  - Receive and store stock prices.
+  - Provide APIs for stock data and notifications.
+  - Evaluate price conditions and trigger notifications.
+- **Implementation**:
+  - **Framework**: FastAPI for REST APIs.
+  - **API Endpoints**:
+    - `POST /stocks`: Accept stock data from Client.
+    - `GET /stocks/{symbol}`: Return stock price history (with time range query params).
+    - `POST /notifications`: Create notification (e.g., `{symbol: "AAPL", condition: "price > 150", threshold: 150}`).
+    - `GET /notifications`: List notifications.
+    - `DELETE /notifications/{id}`: Remove notification.
+  - **Notification Logic**:
+    - On each `POST /stocks`, query Notifications table for matching conditions.
+    - If condition met and `last_notified` is over 1 hour ago, publish to Redis Pub/Sub.
+  - **Database**: SQLAlchemy for PostgreSQL interaction.
+- **Error Handling**:
+  - Validate incoming data with Pydantic.
+  - Handle database errors with retries.
+  - Rate limit APIs using FastAPI middleware.
+
+### 4.3 Database
+- **Schema**:
+  - **Stocks**:
+    ```sql
+    CREATE TABLE stocks (
+        id SERIAL PRIMARY KEY,
+        symbol VARCHAR(10) NOT NULL,
+        timestamp TIMESTAMP NOT NULL,
+        price FLOAT NOT NULL,
+        volume INTEGER,
+        INDEX idx_symbol_timestamp (symbol, timestamp)
+    );
+    ```
+  - **Notifications**:
+    ```sql
+    CREATE TABLE notifications (
+        id UUID PRIMARY KEY,
+        user_id VARCHAR(255) NOT NULL,
+        symbol VARCHAR(10) NOT NULL,
+        condition VARCHAR(50) NOT NULL,
+        threshold FLOAT NOT NULL,
+        last_notified TIMESTAMP,
+        INDEX idx_symbol (symbol)
+    );
+    ```
+  - **Users** (if SSO implemented):
+    ```sql
+    CREATE TABLE users (
+        user_id VARCHAR(255) PRIMARY KEY,
+        email VARCHAR(255) NOT NULL
+    );
+    ```
+- **Rationale**:
+  - Indexes on `symbol` and `timestamp` optimize queries for stock history and notification checks.
+  - UUID for notification IDs ensures uniqueness.
+  - `last_notified` enforces the 1-hour cooldown.
+- **Scaling**:
+  - Partition `stocks` by `symbol` or `timestamp` if data grows significantly.
+  - Use connection pooling for database queries.
+
+### 4.4 Notification Service
+- **Responsibilities**:
+  - Consume notification requests from Redis.
+  - Send emails via AWS SES.
+- **Implementation**:
+  - Python script subscribing to Redis Pub/Sub channel.
+  - Use `boto3` to send emails with SES.
+  - Update `last_notified` in Notifications table after sending.
+- **Error Handling**:
+  - Retry failed email sends up to 3 times.
+  - Log failures for debugging.
+
+### 4.5 Frontend (Optional)
+- **Responsibilities**:
+  - Display stock price charts.
+  - Allow users to set/delete notifications.
+- **Implementation**:
+  - React app with:
+    - Dashboard: Line chart per stock symbol (Chart.js).
+    - Notification Form: Input for symbol, condition, and threshold.
+    - Notification List: Table of active notifications with delete buttons.
+  - Use `axios` to call Server APIs.
+- **Real-Time Updates**:
+  - Poll `GET /stocks/{symbol}` every 30 seconds for chart updates.
+  - Alternative: Use Server-Sent Events if time permits.
+
+---
+
+## 5. Deployment
+- **Setup**: `docker-compose.yml` orchestrates:
+  - Client Service (Python).
+  - Server (FastAPI).
+  - Database (PostgreSQL).
+  - Redis (Queue).
+  - Frontend (React, served via Nginx).
+  - Reverse Proxy (Caddy for HTTPS).
+- **Configuration**:
+  - Environment variables for API keys, database credentials, and SES settings.
+  - Volume for PostgreSQL data persistence.
+- **Workflow**:
+  - Build images: `docker-compose build`.
+  - Run: `docker-compose up`.
+  - Access Frontend at `https://localhost` (Caddy handles TLS).
+
+---
+
+## 6. Security
+- **HTTPS**: Caddy auto-provisions TLS certificates.
+- **Input Validation**: Pydantic enforces strict schemas for API payloads.
+- **Authentication** (Optional):
+  - OAuth2 with Gmail using `python-social-auth` or `authlib`.
+  - Store user tokens in `users` table.
+- **Rate Limiting**: FastAPI middleware limits requests to 100/minute per IP.
+- **Secrets Management**: Store API keys and credentials in `.env` file, loaded via `python-dotenv`.
+
+---
+
+## 7. Optional Features Implemented
+Given the 12-hour timeframe, the following optional features are prioritized:
+1. **Docker Deployment**: `docker-compose` for easy setup.
+2. **Unit Tests**: Test notification logic and API endpoints using `pytest`.
+3. **Frontend UI**: Basic React dashboard with charts and notification form.
+4. **HTTPS**: Via Caddy reverse proxy.
+5. **Documentation**: README with setup, API docs, and deployment instructions.
+
+Omitted features (due to time constraints):
+- gRPC/Kafka: Too complex for small scale.
+- mTLS/SSO: Requires significant setup.
+- Graph DB: PostgreSQL suffices.
+
+---
+
+## 8. Scalability Considerations
+- **Client**: Run multiple instances for more stock symbols, with a shared Redis cache.
+- **Server**: Deploy FastAPI behind a load balancer (e.g., Nginx) for high traffic.
+- **Database**: Add read replicas for query-heavy workloads.
+- **Notification Service**: Scale Redis subscribers horizontally.
+- **Frontend**: Serve via CDN for static assets.
+
+---
+
+## 9. Development Plan (12 Hours)
+- **Hour 1-2**: Set up project structure, Docker, and PostgreSQL.
+- **Hour 3-4**: Build Client Service (Alpha Vantage integration).
+- **Hour 5-7**: Develop Server (FastAPI, APIs, notification logic).
+- **Hour 8-9**: Implement Notification Service (Redis, SES).
+- **Hour 10-11**: Create Frontend (React dashboard, charts).
+- **Hour 12**: Write tests, documentation, and polish deployment.
+
+---
+
+## 10. API Specification (Sample)
+- **POST /stocks**:
+  - Request: `{ "symbol": "AAPL", "timestamp": "2025-04-12T10:00:00Z", "price": 150.25, "volume": 1000 }`
+  - Response: `{ "status": "success" }` (201)
+- **GET /stocks/{symbol}**:
+  - Query Params: `start_time`, `end_time`
+  - Response: `{ "symbol": "AAPL", "data": [{ "timestamp": "...", "price": 150.25, "volume": 1000 }, ...] }` (200)
+- **POST /notifications**:
+  - Request: `{ "symbol": "AAPL", "condition": "price > 150", "threshold": 150, "user_id": "user123" }`
+  - Response: `{ "id": "uuid", "status": "created" }` (201)
+
+---
+
+This architecture provides a robust, scalable, and maintainable solution within the project constraints. The Python/FastAPI/PostgreSQL/Redis/React stack ensures rapid development while supporting optional features like Docker and a Frontend UI. If you have specific adjustments (e.g., prefer Go over Python, Kafka over Redis, or no Frontend), let me know, and I can refine the design!

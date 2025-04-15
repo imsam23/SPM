@@ -1,0 +1,104 @@
+stock-price-monitor/
+├── client/                       # Client Service (fetches stock prices)
+│   ├── src/                      # Source code
+│   │   ├── __init__.py
+│   │   ├── main.py             # Entry point for fetching and sending stock data
+│   │   ├── alpha_vantage.py    # Alpha Vantage API integration
+│   │   ├── config.py           # Configuration loading (.env)
+│   │   └── utils/              # Utility functions
+│   │       ├── __init__.py
+│   │       ├── logger.py       # Logging setup
+│   │       └── retry.py        # Retry logic for API calls
+│   ├── tests/                  # Unit tests
+│   │   ├── __init__.py
+│   │   └── test_alpha_vantage.py
+│   ├── Dockerfile              # Docker configuration for Client
+│   ├── requirements.txt        # Python dependencies
+│   └── .env.example            # Example environment variables
+├── server/                       # Server (REST APIs and notification logic)
+│   ├── src/                      # Source code
+│   │   ├── __init__.py
+│   │   ├── main.py             # FastAPI entry point
+│   │   ├── api/                # API routes
+│   │   │   ├── __init__.py
+│   │   │   ├── stocks.py       # Stock price endpoints
+│   │   │   └── notifications.py # Notification endpoints
+│   │   ├── models/             # Pydantic and SQLAlchemy models
+│   │   │   ├── __init__.py
+│   │   │   ├── stock.py
+│   │   │   └── notification.py
+│   │   ├── database/           # Database setup and migrations
+│   │   │   ├── __init__.py
+│   │   │   ├── db.py           # Database connection
+│   │   │   └── migrations/     # Alembic migrations
+│   │   │       └── versions/
+│   │   ├── services/           # Business logic
+│   │   │   ├── __init__.py
+│   │   │   ├── stock_service.py
+│   │   │   └── notification_service.py
+│   │   ├── config.py           # Configuration loading
+│   │   └── utils/              # Utility functions
+│   │       ├── __init__.py
+│   │       ├── logger.py
+│   │       └── redis.py        # Redis Pub/Sub client
+│   ├── tests/                  # Unit tests
+│   │   ├── __init__.py
+│   │   ├── test_stocks.py
+│   │   └── test_notifications.py
+│   ├── Dockerfile              # Docker configuration for Server
+│   ├── requirements.txt        # Python dependencies
+│   └── .env.example            # Example environment variables
+├── notification/                 # Notification Service (sends emails)
+│   ├── src/                      # Source code
+│   │   ├── __init__.py
+│   │   ├── main.py             # Entry point for consuming Redis messages
+│   │   ├── email.py            # AWS SES email sending
+│   │   ├── config.py           # Configuration loading
+│   │   └── utils/              # Utility functions
+│   │       ├── __init__.py
+│   │       ├── logger.py
+│   │       └── redis.py        # Redis Pub/Sub client
+│   ├── tests/                  # Unit tests
+│   │   ├── __init__.py
+│   │   └── test_email.py
+│   ├── Dockerfile              # Docker configuration for Notification Service
+│   ├── requirements.txt        # Python dependencies
+│   └── .env.example            # Example environment variables
+├── frontend/                     # Frontend (React dashboard, optional)
+│   ├── public/                   # Static assets
+│   │   ├── index.html
+│   │   └── favicon.ico
+│   ├── src/                      # React source code
+│   │   ├── components/          # Reusable UI components
+│   │   │   ├── Chart.js        # Stock price chart
+│   │   │   ├── NotificationForm.js
+│   │   │   └── NotificationList.js
+│   │   ├── pages/              # Page components
+│   │   │   └── Dashboard.js
+│   │   ├── services/           # API client
+│   │   │   └── api.js         # Axios-based API calls
+│   │   ├── App.js              # Main app component
+│   │   ├── index.js            # React entry point
+│   │   └── styles/             # CSS/SCSS files
+│   │       └── App.css
+│   ├── tests/                  # Unit tests
+│   │   ├── Chart.test.js
+│   │   └── NotificationForm.test.js
+│   ├── Dockerfile              # Docker configuration for Frontend
+│   ├── package.json            # Node.js dependencies
+│   ├── .env.example            # Example environment variables
+│   └── nginx.conf              # Nginx configuration for serving
+├── deployment/                   # Deployment configurations
+│   ├── docker-compose.yml       # Orchestrates all services
+│   └── caddy/                   # Caddy reverse proxy configuration
+│       └── Caddyfile
+├── docs/                        # Documentation
+│   ├── api.md                  # API specification
+│   ├── setup.md                # Setup instructions
+│   └── architecture.md         # Architecture overview
+├── scripts/                     # Utility scripts
+│   ├── init_db.sh              # Initialize PostgreSQL database
+│   └── run_tests.sh            # Run all tests
+├── .gitignore                   # Git ignore file
+├── README.md                   # Project overview and setup guide
+└── LICENSE                     # License file

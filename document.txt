@@ -1,0 +1,163 @@
+# Stock Price Monitoring Service
+
+---
+
+## Project Title
+**Stock Price Monitoring**
+
+---
+
+## Description
+This project involves building a service that monitors stock prices. The service consists of the following components:
+
+1. **Client Service**:
+   - Fetches stock prices using the [Alpha Vantage API](https://www.alphavantage.co/documentation/#intraday).
+   - Selects 10 different stock symbols to fetch and submit the data to the server.
+
+2. **Server**:
+   - Persists the stock price data into a database.
+   - Provides APIs for users to:
+     - Set price notifications.
+     - Notify users via email when price conditions are met.
+   - Ensures users are notified only once per hour for each stock symbol.
+
+3. **Database**:
+   - The database type and schema design are up to the developer's choice.
+
+---
+
+## Architecture Diagram
++-------------------+          +-------------------+          +-------------------+
+|                   |          |                   |          |                   |
+|   Client Service  |          |       Server      |          |     Database      |
+|                   |          |                   |          |                   |
+| - Fetch stock     |          | - Persist stock   |          | - Store stock     |
+|   prices from API |          |   price data      |          |   price data      |
+| - Submit data     |          | - Provide APIs    |          | - Store user      |
+|   to server       |          |   for notifications|         |   notifications   |
+|                   |          | - Send email      |          |                   |
+|                   |          |   notifications   |          |                   |
++-------------------+          +-------------------+          +-------------------+
+        |                             |                                |
+        |                             |                                |
+        +-----------------------------+--------------------------------+
+                                      |
+                                      |
+                               +-------------------+
+                               |                   |
+                               |  Alpha Vantage    |
+                               |       API         |
+                               |                   |
+                               +-------------------+
+
+---
+
+## Languages
+- **Backend**: Python, Go, or Java.
+- **Frontend (Optional)**: React, VueJS, or any other modern web framework (e.g., Svelte).
+
+---
+
+## Scope
+This is an open-ended project, meaning:
+- There is no single correct solution.
+- Developers are encouraged to add extra features to showcase their skills.
+
+---
+
+## Optional Features
+To enhance the project, consider implementing the following:
+
+### General
+1. Use communication protocols other than HTTP APIs, such as **gRPC** or **Kafka**.
+2. Deploy the application using **Docker**, **Kubernetes**, **Helm**, or **docker-compose**.
+3. Explore different database types:
+   - **Relational** (e.g., PostgreSQL, MySQL).
+   - **NoSQL** (e.g., MongoDB).
+   - **Graph** (e.g., Neo4j).
+4. Include **unit tests** or **integration tests**.
+5. Build a **frontend UI** to:
+   - Display stock prices in a chart.
+   - Configure price notifications.
+6. Provide **documentation** on how to deploy the application (e.g., `README.md`).
+7. Ensure the application can handle **downtime** of external services.
+
+### Security
+1. Use **HTTPS** for secure communication between users and the server.
+2. Implement **SSO Authentication** using Gmail.
+3. Secure client-server communication using **mTLS**.
+
+---
+
+## Suggested Timeframe
+- Spend approximately **12 hours** on the project.
+- Submit the assignment within **7 calendar days**.
+
+---
+
+## Submission Guidelines
+- Deliver the source code in a **Git repository** (GitHub or GitLab).
+- Share the repository link with the provided company email.
+
+---
+
+## References
+- [Alpha Vantage API Documentation](https://www.alphavantage.co/documentation/#intraday)
+
+---
+
+## Project Structure
+SPM/
+├── client/                     # Client Service
+│   ├── main.py                 # Main script for fetching stock prices
+│   ├── config.py               # Configuration (e.g., API keys, stock symbols)
+│   ├── requirements.txt        # Python dependencies for the client
+│   └── utils.py                # Helper functions (e.g., retry logic, API calls)
+│
+├── server/                     # Server (FastAPI)
+│   ├── main.py                 # Entry point for the FastAPI server
+│   ├── models.py               # Database models (SQLAlchemy)
+│   ├── schemas.py              # Pydantic schemas for API validation
+│   ├── routes/                 # API routes
+│   │   ├── stocks.py           # Routes for stock-related APIs
+│   │   └── notifications.py    # Routes for notification-related APIs
+│   ├── services/               # Business logic
+│   │   ├── notification_service.py  # Notification logic
+│   │   └── stock_service.py    # Stock data handling logic
+│   ├── config.py               # Configuration (e.g., database, Redis settings)
+│   ├── requirements.txt        # Python dependencies for the server
+│   └── utils.py                # Helper functions (e.g., error handling, logging)
+│
+├── notification_service/       # Notification Service
+│   ├── main.py                 # Redis subscriber for notifications
+│   ├── email_service.py        # Logic for sending emails via AWS SES
+│   ├── config.py               # Configuration (e.g., Redis, AWS SES settings)
+│   ├── requirements.txt        # Python dependencies for the notification service
+│   └── utils.py                # Helper functions (e.g., retry logic)
+│
+├── frontend/                   # Frontend (React)
+│   ├── public/                 # Static files (e.g., index.html)
+│   ├── src/                    # React source code
+│   │   ├── components/         # React components (e.g., charts, forms)
+│   │   ├── pages/              # Pages (e.g., Dashboard, Notifications)
+│   │   ├── App.js              # Main React app
+│   │   ├── index.js            # Entry point for React
+│   │   └── api.js              # API calls to the server
+│   └── package.json            # React dependencies
+│
+├── database/                   # Database setup
+│   ├── init.sql                # SQL scripts for initializing the database
+│   └── migrations/             # Database migration files
+│
+├── docker-compose.yml          # Docker Compose file for orchestrating services
+├── Dockerfile                  # Dockerfile for the server
+├── README.md                   # Documentation
+├── .env                        # Environment variables (e.g., API keys, DB credentials)
+└── tests/                      # Test cases
+    ├── client_tests/           # Tests for the client service
+    ├── server_tests/           # Tests for the server
+    ├── notification_tests/     # Tests for the notification service
+    └── frontend_tests/         # Tests for the frontend
+
+
+

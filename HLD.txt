@@ -1,0 +1,238 @@
+# High-Level Design (HLD) for Stock Price Monitoring Service
+
+---
+
+## 1. Overview
+The Stock Price Monitoring Service is designed to fetch real-time stock prices, persist them in a database, and notify users via email when predefined price conditions are met. The system is composed of a **Client Service**, a **Server**, and a **Database**, with optional features like a frontend UI, advanced communication protocols, and security mechanisms.
+
+This HLD outlines the system’s components, interactions, data flow, and high-level considerations to meet functional and non-functional requirements.
+
+---
+
+## 2. System Requirements
+
+### 2.1 Functional Requirements
+- **Client Service**:
+  - Fetch intraday stock prices for 10 predefined stock symbols using the Alpha Vantage API.
+  - Submit fetched data to the server for persistence.
+- **Server**:
+  - Persist stock price data in a database.
+  - Provide APIs to:
+    - Allow users to set price notifications (e.g., alert when stock price exceeds or falls below a threshold).
+    - Notify users via email when conditions are met, limited to once per hour per stock symbol.
+- **Database**:
+  - Store stock price data and user notification preferences.
+- **Optional Frontend**:
+  - Display stock price trends in charts.
+  - Provide a UI to configure notifications.
+
+### 2.2 Non-Functional Requirements
+- **Scalability**: Handle multiple stock symbols and user requests efficiently.
+- **Reliability**: Ensure data persistence and notification delivery even during external service downtime.
+- **Security**: Secure communication (e.g., HTTPS, mTLS) and user authentication (e.g., SSO with Gmail).
+- **Performance**: Fetch and process stock prices with low latency; ensure notifications are timely.
+- **Maintainability**: Modular design with clear documentation and tests.
+- **Rate Limits**: Handle Alpha Vantage API rate limits (e.g., 5 API calls per minute for free tier).
+
+---
+
+## 3. System Components
+
+### 3.1 Client Service
+- **Purpose**: Fetches stock prices and sends them to the server.
+- **Key Functions**:
+  - Query Alpha Vantage API for intraday stock prices (e.g., 1-minute intervals).
+  - Support 10 predefined stock symbols (configurable).
+  - Send fetched data to the server via HTTP or gRPC.
+- **Considerations**:
+  - Handle API rate limits by queuing requests or caching data.
+  - Retry failed API calls with exponential backoff.
+  - Log errors for debugging.
+
+### 3.2 Server
+- **Purpose**: Processes stock data, manages user notifications, and handles API requests.
+- **Key Functions**:
+  - **Data Ingestion**: Receive stock price data from the client and store it in the database.
+  - **API Endpoints**:
+    - `POST /notifications`: Set price notification (e.g., stock symbol, price threshold, condition).
+    - `GET /stocks/{symbol}`: Retrieve historical stock prices.
+    - `DELETE /notifications/{id}`: Remove a notification.
+  - **Notification Logic**:
+    - Monitor incoming stock prices against user-defined conditions.
+    - Trigger email notifications when conditions are met, respecting the 1-hour cooldown per stock symbol.
+  - **Email Service**: Integrate with an SMTP service (e.g., SendGrid, AWS SES) for sending notifications.
+- **Considerations**:
+  - Use asynchronous processing for notifications to avoid blocking.
+  - Implement rate limiting for API endpoints to prevent abuse.
+  - Cache recent stock prices to reduce database load.
+
+### 3.3 Database
+- **Purpose**: Store stock price data and user notification preferences.
+- **Proposed Type**: Relational (e.g., PostgreSQL) for structured data and strong consistency.
+- **Schema (Tentative)**:
+  - **Stocks Table**:
+    - `symbol` (string): Stock ticker (e.g., AAPL).
+    - `timestamp` (datetime): Time of price update.
+    - `price` (float): Stock price.
+    - `volume` (integer): Trading volume (optional).
+  - **Notifications Table**:
+    - `id` (UUID): Unique notification ID.
+    - `user_id` (string): User identifier (from SSO).
+    - `symbol` (string): Stock ticker.
+    - `condition` (string): Condition (e.g., "price > 100").
+    - `threshold` (float): Price threshold.
+    - `last_notified` (datetime): Timestamp of last notification (for cooldown).
+  - **Users Table** (if SSO is implemented):
+    - `user_id` (string): Unique user ID.
+    - `email` (string): User email for notifications.
+- **Considerations**:
+  - Index `symbol` and `timestamp` in the Stocks table for fast queries.
+  - Use transactions to ensure data consistency.
+  - Support for NoSQL (e.g., MongoDB) or time-series DB (e.g., InfluxDB) if scalability is prioritized.
+
+### 3.4 Optional Frontend
+- **Purpose**: Provide a user-friendly interface for stock price visualization and notification management.
+- **Key Features**:
+  - Real-time stock price charts (e.g., using Chart.js or D3.js).
+  - Form to configure notifications (e.g., select stock, set price threshold).
+  - Dashboard to view active notifications and stock trends.
+- **Considerations**:
+  - Use WebSocket or Server-Sent Events (SSE) for real-time updates.
+  - Ensure responsive design for mobile and desktop.
+
+### 3.5 Notification Service
+- **Purpose**: Handle email notifications for price alerts.
+- **Key Functions**:
+  - Queue notification requests to prevent overwhelming the email service.
+  - Enforce the 1-hour cooldown per stock symbol per user.
+  - Send emails using a third-party service (e.g., AWS SES, SendGrid).
+- **Considerations**:
+  - Use a message queue (e.g., RabbitMQ, Kafka) for reliable delivery.
+  - Log notification failures for retries.
+
+---
+
+## 4. Data Flow
+1. **Stock Price Fetching**:
+   - Client Service polls Alpha Vantage API for 10 stock symbols every minute.
+   - Client sends data to Server via HTTP POST or gRPC.
+2. **Data Persistence**:
+   - Server validates and stores stock price data in the Database.
+3. **Notification Setup**:
+   - User (via API or Frontend) sets a price notification (e.g., "Alert when AAPL > $150").
+   - Server saves notification details in the Database.
+4. **Price Monitoring**:
+   - Server compares incoming stock prices against notification conditions.
+   - If a condition is met and the cooldown period has elapsed, the Server queues an email notification.
+5. **Notification Delivery**:
+   - Notification Service dequeues requests and sends emails via an SMTP provider.
+6. **User Interaction**:
+   - Users query stock prices or manage notifications via APIs or Frontend.
+   - Frontend fetches data from Server and renders charts.
+
+---
+
+## 5. System Architecture (High-Level)
+
+```
+[Alpha Vantage API]
+         |
+         v
+[Client Service] ----> [Server]
+                          |
+                          v
+                       [Database]
+                          |
+                          v
+[Notification Service] --> [Email Service]
+                          |
+                          v
+                       [Users]
+[Frontend (Optional)] <--> [Server]
+```
+
+- **Client Service**: Standalone process fetching stock prices.
+- **Server**: REST API or gRPC server handling requests and business logic.
+- **Database**: Centralized storage for stock and notification data.
+- **Notification Service**: Asynchronous process for sending emails.
+- **Frontend**: Web app communicating with Server APIs.
+- **Email Service**: External SMTP provider for notifications.
+
+---
+
+## 6. Non-Functional Considerations
+
+### 6.1 Scalability
+- **Client**: Parallelize API calls for multiple stock symbols.
+- **Server**: Use load balancing and horizontal scaling for API endpoints.
+- **Database**: Shard or partition data for large-scale stock price storage.
+- **Notification Service**: Scale message queue workers independently.
+
+### 6.2 Reliability
+- **Client**: Cache stock prices locally during API downtime.
+- **Server**: Implement circuit breakers for external service failures.
+- **Database**: Use replication for high availability.
+- **Notification Service**: Retry failed email deliveries with exponential backoff.
+
+### 6.3 Security
+- **HTTPS**: Enforce TLS for all external communications.
+- **mTLS**: Secure client-server communication (optional).
+- **SSO**: Integrate Gmail OAuth2 for user authentication.
+- **Input Validation**: Sanitize API inputs to prevent injection attacks.
+
+### 6.4 Performance
+- **Client**: Optimize API calls to stay within rate limits.
+- **Server**: Cache frequent queries (e.g., recent stock prices) using Redis.
+- **Database**: Use indexing and query optimization for fast reads.
+- **Notification Service**: Batch email sends to reduce overhead.
+
+### 6.5 Maintainability
+- Modular code structure with clear separation of concerns.
+- Comprehensive unit and integration tests.
+- Detailed documentation (e.g., README, API specs).
+- Logging and monitoring for debugging and performance tracking.
+
+---
+
+## 7. Optional Features (Prioritized)
+Based on the suggested 12-hour timeframe, the following optional features are feasible and impactful:
+1. **Docker Deployment**: Package services in containers for portability.
+2. **Unit Tests**: Cover core logic (e.g., notification conditions, cooldown).
+3. **Frontend UI**: Basic dashboard with stock charts and notification form.
+4. **HTTPS**: Secure API communication.
+5. **Message Queue**: Use RabbitMQ for reliable notifications.
+6. **Documentation**: Provide a README with setup and deployment instructions.
+
+---
+
+## 8. Assumptions
+- Alpha Vantage API free tier is sufficient for 10 stock symbols.
+- Email notifications are sent via a third-party SMTP service.
+- Users have Gmail accounts for SSO (if implemented).
+- The system handles moderate traffic (e.g., 100 users, 10 stock symbols).
+- Database schema can evolve based on additional requirements.
+
+---
+
+## 9. Risks and Mitigations
+- **Risk**: Alpha Vantage API rate limits or downtime.
+  - **Mitigation**: Cache data, implement retries, and use fallback data sources.
+- **Risk**: Notification spam due to rapid price fluctuations.
+  - **Mitigation**: Enforce 1-hour cooldown and debounce price checks.
+- **Risk**: Database performance bottlenecks.
+  - **Mitigation**: Optimize queries, use indexing, and consider time-series DBs.
+- **Risk**: Security vulnerabilities in APIs.
+  - **Mitigation**: Use HTTPS, validate inputs, and implement authentication.
+
+---
+
+## 10. Next Steps
+- Define detailed architecture (e.g., tech stack, communication protocols).
+- Design database schema with specific fields and indexes.
+- Plan API endpoints with request/response formats.
+- Select optional features to implement within the 12-hour timeframe.
+- Outline deployment strategy (e.g., Docker, cloud provider).
+
+---
+
+This HLD provides a foundation for the Stock Price Monitoring Service. Let’s proceed to define the architecture, including the tech stack, communication protocols, and specific design choices. Please share your preferences (e.g., Python vs. Go, REST vs. gRPC, PostgreSQL vs. MongoDB) or any specific areas to focus on!
